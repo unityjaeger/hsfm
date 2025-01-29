@@ -157,5 +157,15 @@ physicsFSM:addTransition("Walk", "Idle", function(context)
 	return context.xVelocity <= 0
 end)
 
-fsm:update()
-fsm:update()
+fsm:update() --[[output
+exited	Grounded
+entered	Physics
+updated	Physics
+exited	Walk
+entered	Idle
+updated	Idle
+]]
+fsm:update() --[[output
+updated	Physics
+updated	Idle
+]]
