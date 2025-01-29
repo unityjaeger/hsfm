@@ -36,8 +36,8 @@ local function addTransition(self: FSM, from: string, to: string, condition: (co
 end
 
 local function addTwoWayTransition(self: FSM, from: string, to: string, condition: (context: {any}) -> boolean): ()
-    addTransition(from, to, condition)
-    addTransition(to, from, function(context)
+    addTransition(self, from, to, condition)
+    addTransition(self, to, from, function(context)
         return not condition(context)
     end)
 end
@@ -70,21 +70,18 @@ local function update(self: FSM, deltaTime: number): ()
 
     local state = states[from]
 
-    local transitions = self._transitions[from]
-    if transitions then
-        for to, condition in self._transitions[from] do
-            if condition(context) then
-                local newState = states[to]
+    for to, condition in self._transitions[from] do
+        if condition(context) then
+            local newState = states[to]
 
-                local onExit = (state.parent or state).onExit
-                local onEnter = (newState.parent or newState).onEnter
+            local onExit = (state.parent or state).onExit
+            local onEnter = (newState.parent or newState).onEnter
 
-                self.currentState = to
-                state = newState
+            self.currentState = to
+            state = newState
 
-                onExit(context)
-                onEnter(context)
-            end
+            onExit(context)
+            onEnter(context)
         end
     end
 
@@ -148,12 +145,15 @@ fsm:setDefaultState("Grounded")
 fsm:addTransition("Grounded", "Physics", function()
     return true
 end)
+fsm:addTransition("Physics", "Gronded", function()
+    return false
+end)
 
 local physicsFSM = fsm:getChildOf("Physics")
 physicsFSM:setContext({xVelocity = 0})
 physicsFSM:setDefaultState("Walk")
 
-physicsFSM:addTransition("Walk", "Idle", function(context)
+physicsFSM:addTwoWayTransition("Walk", "Idle", function(context)
 	return context.xVelocity <= 0
 end)
 
