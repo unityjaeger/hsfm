@@ -1,100 +1,3 @@
-do
-	local function createFSM(config)
-		local fsm = {
-			currentState = nil,
-			isFSM = true,
-
-			transitions = {},
-			context = {},
-			states = config
-		}
-
-		return fsm
-	end
-
-	local function createSubFSM(state, config)
-		local fsm = {
-			currentState = nil,
-			isFSM = true,
-
-			onEnter = state.onEnter,
-			onExit = state.onExit,
-			onUpdate = state.onUpdate,
-
-			transitions = {},
-			context = {},
-			states = config
-		}
-
-
-
-		return fsm
-	end
-
-	local function create(state, config)
-		if state and config then
-			return createSubFSM(state, config)
-		else
-			return createFSM(state)
-		end
-	end
-
-	local function parsePath(fsm, path)
-		local path = string.split(path, "/")
-		local last = table.remove(path)
-		local start = fsm
-
-		for _, str in path do
-			start = start.states[str]
-		end
-
-		return start.transitions, last
-	end
-
-	local function defineTransition(fsm, from, to, condition)
-		local path = fsm.states
-		local transitions, from = parsePath(fsm, from)
-		local _, to = parsePath(fsm, to)
-		if not transitions[from] then
-			transitions[from] = {}
-		end
-		transitions[from][to] = condition
-	end
-
-	local attack = {
-		onEnter = function() end,
-		onExit = function() end,
-		onUpdate = function() end
-	}
-	local combat = table.clone(attack)
-	local fetching = table.clone(combat)
-
-	local fsm1 = create({
-		["Combat"] = create(combat, {
-			["Attack"] = attack
-		}),
-		["Fetching"] = fetching
-	})
-
-	defineTransition(fsm1, "Combat", "Fetching", function() end)
-	defineTransition(fsm1, "Combat/Attack", "Combat/Attack", function() end)
-	
-
-	print(fsm1)
-end
-
---[[
-{
-	transitions = {},
-	child = FSM? optional,
-	states = {
-		...
-	},
-	context = {},
-	currentState = ...
-}
-]]
-
 type State = {
 	onEnter: (context: any) -> (),
 	onExit: (context: any) -> (),
@@ -116,12 +19,11 @@ type FSM = {
 	_states: Config,
 	
 	addTransition: (self: FSM, from: string, to: string, condition: (context: {any}) -> boolean) -> (),
+    addTwoWayTransition: (self: FSM, from: string, to: string, condition: (context: {any}) -> boolean) -> (),
 	getChildOf: (self: FSM, state: string) -> FSM?,
 	setDefaultState: (self: FSM, state: string) -> (),
-	context: {
-		set: (self: FSM, context: {any}) -> (),
-		patch: (self: FSM, context: {any}) -> (),
-	},
+	setContext: (self: FSM, context: {any}) -> (),
+	patchContext: (self: FSM, context: {any}) -> (),
 	update: (self: FSM, deltaTime: number) -> ()
 }
 
@@ -133,9 +35,16 @@ local function addTransition(self: FSM, from: string, to: string, condition: (co
 	transitions[from][to] = condition
 end
 
+local function addTwoWayTransition(self: FSM, from: string, to: string, condition: (context: {any}) -> boolean): ()
+    addTransition(from, to, condition)
+    addTransition(to, from, function(context)
+        return not condition(context)
+    end)
+end
+
 local function getChildOf(self: FSM, state: string): FSM?
 	local child = self._states[state]
-	return child._isFSM and child or nil
+	return child.parent and child or nil
 end
 
 local function setContext(self: FSM, context: {any}): ()
@@ -154,56 +63,99 @@ local function setDefaultState(self: FSM, state: string): ()
 	end
 end
 
-local function update(self: FSM, deltaTime: number)
-	-- do topmost state then call :update on child state
+local function update(self: FSM, deltaTime: number): ()
+    local from = self.currentState
+    local context = self._context
+    local states = self._states
+
+    local state = states[from]
+
+    local transitions = self._transitions[from]
+    if transitions then
+        for to, condition in self._transitions[from] do
+            if condition(context) then
+                local newState = states[to]
+
+                local onExit = (state.parent or state).onExit
+                local onEnter = (newState.parent or newState).onEnter
+
+                self.currentState = to
+                state = newState
+
+                onExit(context)
+                onEnter(context)
+            end
+        end
+    end
+
+    if state.parent then
+        state.parent.onUpdate(context, deltaTime)
+        state:update()
+    else
+        state.onUpdate(context, deltaTime)
+    end
 end
 
-local function create(config: Config): FSM
+local function create(parentState: State, config: Config): FSM
 	local fsm = {
-		_isFSM = true,
 		_transitions = {},
 		_context = {},
 		_states = config,
 		currentState = nil,
+        parent = parentState
 	}
 	
 	fsm.addTransition = addTransition
+    fsm.addTwoWayTransition = addTwoWayTransition
 	fsm.getChildOf = getChildOf
 	fsm.setDefaultState = setDefaultState
-	fsm.context = {
-		set = setContext,
-		patch = patchContext
-	}
-	
+	fsm.setContext = setContext
+    fsm.patchContext = patchContext
+
 	fsm.update = update
 	
 	return fsm
 end
 
-local physics = {onUpdate = function()end, onEnter = function()end, onExit = function()end}
-local grounded = table.clone(physics)
-local idle = table.clone(physics)
-local walk = table.clone(physics)
+local function construct(name)
+    return {
+        onUpdate = function()
+            print("updated", name)
+        end,
+        onEnter = function()
+            print("entered", name)
+        end,
+        onExit = function()
+            print("exited", name)
+        end
+    }
+end
 
-local fsm = create({
-	Physics = create({
+local physics = construct("Physics")
+local grounded = construct("Grounded")
+local idle = construct("Idle")
+local walk = construct("Walk")
+
+local fsm = create(nil, {
+	Physics = create(physics, {
 		Walk = walk,
 		Idle = idle
 	}),
 	Grounded = grounded
 })
 
-fsm:setDefaultState("Physics")
+fsm:setDefaultState("Grounded")
+fsm:addTransition("Grounded", "Physics", function()
+    return true
+end)
 
 local physicsFSM = fsm:getChildOf("Physics")
-physicsFSM.context:set({xVelocity = 0})
+physicsFSM:setContext({xVelocity = 0})
 physicsFSM:setDefaultState("Walk")
 
 physicsFSM:addTransition("Walk", "Idle", function(context)
 	return context.xVelocity <= 0
 end)
 
-print(fsm)
 fsm:update()
-
---i FORGOR: parent state for children fsms, make a parentState field and a transition utility function
+fsm:update()
